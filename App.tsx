@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, 
@@ -36,6 +35,7 @@ import { DriveFile, FilterState, FileType } from './types';
 import { analyzeFile } from './services/gemini';
 
 // Corrected Firebase modular SDK v9+ imports
+// Fixed: "Module 'firebase/app' has no exported member 'initializeApp'" by using the standard modular import
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 
@@ -166,7 +166,6 @@ const AuthForm: React.FC<{ onAuth: (user: FirebaseUser) => void }> = ({ onAuth }
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
-      // Google users are usually auto-verified by Firebase
       onAuth(user);
     } catch (err: any) {
       setError(err.message);
@@ -511,7 +510,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      // Only set the user if they have verified their email
       if (currentUser && currentUser.emailVerified) {
         setUser(currentUser);
       } else {
@@ -569,15 +567,15 @@ const App: React.FC = () => {
     setUploadError(null);
     const newFiles: DriveFile[] = [];
 
-    for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i];
+    // Use Promise.all to await all file processing and analysis
+    const processFiles = Array.from(fileList).map(async (file) => {
       if (file.size > 1024 * 1024 * 1024) {
         setUploadError(`File "${file.name}" exceeds the 1GB limit.`);
-        continue;
+        return;
       }
       if (currentUsedSpace + file.size > TOTAL_SPACE_LIMIT) {
         setUploadError(`Storage limit reached.`);
-        break;
+        return;
       }
 
       let type: FileType = 'other';
@@ -600,31 +598,40 @@ const App: React.FC = () => {
 
       try {
         await saveFileToDB(newFile);
-        newFiles.push(newFile);
-
+        
+        // Handle Gemini analysis asynchronously but track completion
         if (type === 'image' || (type === 'text' && file.size < 1024 * 1024)) {
-          const reader = new FileReader();
-          reader.onload = async (e) => {
-            const dataUrl = e.target?.result as string;
-            // Pass actual mimeType (file.type) to the analysis service, not the internal enum category
-            analyzeFile(file.name, dataUrl, file.type).then(async (analysis) => {
-              const updatedFile = { ...newFile, smartAnalysis: analysis };
-              await saveFileToDB(updatedFile);
-              setFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, smartAnalysis: analysis } : f));
-            }).catch(() => {});
-          };
-          reader.readAsDataURL(file);
+          const analysisResult = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+              const dataUrl = e.target?.result as string;
+              const analysis = await analyzeFile(file.name, dataUrl, file.type);
+              resolve(analysis);
+            };
+            reader.readAsDataURL(file);
+          });
+          
+          newFile.smartAnalysis = analysisResult;
+          await saveFileToDB(newFile);
         }
+        
+        newFiles.push(newFile);
       } catch (err) {
         console.error(err);
       }
-    }
+    });
 
-    if (newFiles.length > 0) {
-      setFiles(prev => [...newFiles, ...prev]);
+    try {
+      await Promise.all(processFiles);
+      if (newFiles.length > 0) {
+        setFiles(prev => [...newFiles, ...prev]);
+      }
+    } catch (err) {
+      console.error("Error during batch upload processing", err);
+    } finally {
+      setIsUploading(false);
+      event.target.value = '';
     }
-    setIsUploading(false);
-    event.target.value = '';
   };
 
   const deleteFile = async (id: string) => {

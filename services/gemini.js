@@ -1,15 +1,17 @@
-
 import { GoogleGenAI } from "@google/genai";
 
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
-
+// Analyze a file using Gemini 3 Flash.
 export const analyzeFile = async (fileName, fileData, mimeType) => {
   try {
-    const ai = getAI();
+    // Initialize AI client with API key from environment variable
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
-    const parts = [
-      { text: `Analyze this file named "${fileName}". If it's an image, describe what's in it. If it's a text document, summarize the key points. Provide a concise, professional note suitable for a file drive application.` }
-    ];
+    const prompt = `Analyze this file named "${fileName}". 
+    - If image: Describe elements, colors, and mood.
+    - If text/pdf: Summarize key themes and intents.
+    Keep it professional and concise (under 80 words).`;
+
+    const parts = [{ text: prompt }];
 
     if (mimeType.startsWith('image/')) {
       const base64Data = fileData.split(',')[1] || fileData;
@@ -19,29 +21,25 @@ export const analyzeFile = async (fileName, fileData, mimeType) => {
           mimeType: mimeType
         }
       });
-    } else if (mimeType.startsWith('text/') || mimeType.includes('pdf')) {
+    } else {
       let content = fileData;
       if (fileData.startsWith('data:')) {
         const base64 = fileData.split(',')[1];
-        if (base64) {
-          try {
-            content = atob(base64);
-          } catch (e) {
-            console.error("Failed to decode text content from base64", e);
-          }
-        }
+        try { content = atob(base64); } catch (e) { content = "Unreadable binary content."; }
       }
-      parts.push({ text: `File content for analysis:\n${content.substring(0, 15000)}` });
+      parts.push({ text: `Content Sample:\n${content.substring(0, 10000)}` });
     }
 
+    // Call generateContent with model name and contents object containing the parts
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts }
     });
 
-    return response.text || "No analysis available.";
+    // Access the text property directly (it's a getter, not a method)
+    return response.text || "Analysis complete: No significant insights detected.";
   } catch (error) {
-    console.error("Gemini analysis failed:", error);
-    return "Analysis failed to load.";
+    console.error("Gemini Error:", error);
+    return "Smart analysis unavailable.";
   }
 };
