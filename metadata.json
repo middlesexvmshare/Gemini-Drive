@@ -1,0 +1,7 @@
+{
+  "name": "Gemini Drive",
+  "description": "A smart cloud storage simulation with file previews, intelligent categorization, and advanced filtering.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
