@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, 
@@ -30,7 +31,8 @@ import {
   ArrowRight,
   CheckCircle2,
   KeyRound,
-  RefreshCcw
+  RefreshCcw,
+  Folder
 } from 'lucide-react';
 import { DriveFile, FilterState, FileType } from './types';
 import { analyzeFile } from './services/gemini';
@@ -289,7 +291,7 @@ const AuthForm: React.FC<{ onAuth: (user: FirebaseUser) => void }> = ({ onAuth }
       <div className="bg-white/70 backdrop-blur-xl border border-white p-8 sm:p-12 rounded-[48px] w-full max-w-lg shadow-2xl relative z-10 transition-all duration-500">
         <div className="flex flex-col items-center mb-10 text-center">
           <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-4 rounded-3xl shadow-xl shadow-indigo-100 mb-6 rotate-6 group hover:rotate-0 transition-transform duration-500">
-            <Plus className="text-white" size={32} strokeWidth={3} />
+            <Folder className="text-white" size={32} strokeWidth={3} />
           </div>
           <h1 className="text-4xl font-black tracking-tight text-gray-900 mb-2">Gemini Drive</h1>
           <p className="text-gray-500 font-medium">
@@ -713,7 +715,7 @@ const App: React.FC = () => {
         <div className="p-6 h-full flex flex-col min-w-[256px]">
           <div className="flex items-center space-x-3 mb-10 px-2">
             <div className="bg-gradient-to-br from-indigo-500 via-indigo-600 to-purple-600 p-2.5 rounded-2xl shadow-xl shadow-indigo-100 rotate-3">
-              <Plus className="text-white" size={24} strokeWidth={3} />
+              <Folder className="text-white" size={24} strokeWidth={3} />
             </div>
             <span className="text-xl font-black tracking-tight">Gemini Drive</span>
           </div>
