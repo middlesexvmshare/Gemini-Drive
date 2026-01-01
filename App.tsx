@@ -35,7 +35,7 @@ import { DriveFile, FilterState, FileType } from './types';
 import { analyzeFile } from './services/gemini';
 
 // Corrected Firebase modular SDK v9+ imports
-// Fixed: "Module 'firebase/app' has no exported member 'initializeApp'" by using the standard modular import
+// Fixed: Explicitly importing initializeApp from firebase/app
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 
@@ -318,7 +318,7 @@ const AuthForm: React.FC<{ onAuth: (user: FirebaseUser) => void }> = ({ onAuth }
               <label className="relative cursor-pointer group">
                 <div className="w-24 h-24 rounded-full bg-gray-50 border-2 border-dashed border-gray-200 flex items-center justify-center overflow-hidden transition-all group-hover:border-indigo-400">
                   {profilePreview ? (
-                    <img src={profilePreview} className="w-full h-full object-cover" />
+                    <img src={profilePreview} className="w-full h-full object-cover" alt="Profile preview" />
                   ) : (
                     <Camera className="text-gray-300 group-hover:text-indigo-400 transition-colors" />
                   )}
@@ -567,8 +567,8 @@ const App: React.FC = () => {
     setUploadError(null);
     const newFiles: DriveFile[] = [];
 
-    // Use Promise.all to await all file processing and analysis
-    const processFiles = Array.from(fileList).map(async (file) => {
+    // Use explicit File type to resolve property access errors on 'unknown'
+    const processFiles = (Array.from(fileList) as File[]).map(async (file: File) => {
       if (file.size > 1024 * 1024 * 1024) {
         setUploadError(`File "${file.name}" exceeds the 1GB limit.`);
         return;
@@ -1024,7 +1024,7 @@ const App: React.FC = () => {
               <div className="p-8 bg-white border-t border-gray-50 flex space-x-3">
                 {editingFile?.id === selectedFile.id ? (
                   <>
-                    <button className="flex-1 bg-indigo-600 text-white py-4 rounded-[22px] font-black" onClick={() => { updateFile(editingFile); setSelectedFile(editingFile); }}>Save Changes</button>
+                    <button className="flex-1 bg-indigo-600 text-white py-4 rounded-[22px] font-black" onClick={() => { if (editingFile) { updateFile(editingFile); setSelectedFile(editingFile); } }}>Save Changes</button>
                     <button className="px-8 bg-gray-50 text-gray-500 py-4 rounded-[22px] font-black" onClick={() => setEditingFile(null)}>Cancel</button>
                   </>
                 ) : (
