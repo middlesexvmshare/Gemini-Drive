@@ -36,6 +36,8 @@ import {
 } from 'lucide-react';
 import { DriveFile, FilterState, FileType } from './types';
 import { analyzeFile } from './services/gemini';
+
+// Fix: Correct import for modular Firebase SDK v9+
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 
@@ -606,6 +608,7 @@ const App: React.FC = () => {
           const reader = new FileReader();
           reader.onload = async (e) => {
             const dataUrl = e.target?.result as string;
+            // Fix: Pass actual mimeType (file.type) to the analysis service, not the internal enum category
             analyzeFile(file.name, dataUrl, file.type).then(async (analysis) => {
               const updatedFile = { ...newFile, smartAnalysis: analysis };
               await saveFileToDB(updatedFile);
