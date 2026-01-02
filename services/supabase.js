@@ -31,7 +31,7 @@ export const syncUserWithSupabase = async (user, displayName = '') => {
     uuid: uuid,
     name: displayName || user.displayName || user.email?.split('@')[0] || 'Anonymous User',
     email: user.email,
-    photo_url: user.photoURL || '',
+    photo_url: user.photo_url || user.photoURL || '',
     profile_photo: user.photoURL ? 'profile_image' : 'default_avatar'
   };
 
@@ -51,7 +51,11 @@ export const syncUserWithSupabase = async (user, displayName = '') => {
 
 export const uploadFileToStorage = async (rawUid, fileId, fileBlob) => {
   const path = `${rawUid}/${fileId}`;
-  const { data, error } = await supabase.storage.from('user_uploads').upload(path, fileBlob);
+  // Added upsert: true to allow overwriting existing files (like profile pictures)
+  const { data, error } = await supabase.storage.from('user_uploads').upload(path, fileBlob, {
+    upsert: true,
+    contentType: fileBlob.type
+  });
   if (error) throw error;
   return data;
 };

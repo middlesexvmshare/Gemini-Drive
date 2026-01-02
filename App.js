@@ -146,21 +146,40 @@ const AuthForm = ({ onAuth }) => {
 
 const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
   const [name, setName] = useState(user.name || '');
-  const [profilePhoto, setProfilePhoto] = useState(user.profile_photo || '');
   const [photoUrl, setPhotoUrl] = useState(user.photo_url || '');
   const [saving, setSaving] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const fileInputRef = useRef(null);
 
   const handleUpdate = async () => {
     setSaving(true);
     try {
       const updated = await updateSupabaseUser(user.uid, { 
         name, 
-        profile_photo: profilePhoto, 
         photo_url: photoUrl 
       });
       onUpdate({ ...user, ...updated });
       onClose();
     } catch (e) { alert(e.message || 'Update failed'); } finally { setSaving(false); }
+  };
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setUploadingPhoto(true);
+    try {
+      // Use profile_avatar as a fixed ID for the user's main profile picture
+      await uploadFileToStorage(user.uid, 'profile_avatar', file);
+      const publicUrl = getFilePublicUrl(user.uid, 'profile_avatar');
+      
+      // Update local state temporarily, the final save happens with handleUpdate
+      setPhotoUrl(publicUrl);
+    } catch (err) {
+      alert("Photo upload failed: " + err.message);
+    } finally {
+      setUploadingPhoto(false);
+    }
   };
 
   return html`
@@ -171,9 +190,17 @@ const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
           <button onClick=${onClose} className="p-3 hover:bg-slate-100 rounded-2xl transition-all"><${X} size=${24} /></button>
         </div>
         <div className="space-y-8 text-center">
-          <div className="relative inline-block">
-            <div className="w-28 h-28 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 font-black text-3xl border-4 border-white shadow-2xl overflow-hidden mx-auto">
-              ${photoUrl ? html`<img src=${photoUrl} className="w-full h-full object-cover" />` : (String(name || '?')[0].toUpperCase())}
+          <div className="relative inline-block group cursor-pointer" onClick=${() => fileInputRef.current?.click()}>
+            <div className="w-28 h-28 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 font-black text-3xl border-4 border-white shadow-2xl overflow-hidden mx-auto transition-transform group-hover:scale-105">
+              ${uploadingPhoto ? html`<${Loader2} className="animate-spin" size=${32} />` : 
+                (photoUrl ? html`<img src=${photoUrl} className="w-full h-full object-cover" />` : (String(name || '?')[0].toUpperCase()))}
+              <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                <${Camera} className="text-white" size=${24} />
+              </div>
+            </div>
+            <input type="file" ref=${fileInputRef} className="hidden" accept="image/*" onChange=${handlePhotoUpload} />
+            <div className="absolute -bottom-1 -right-1 bg-white p-2 rounded-full shadow-lg border border-slate-100 text-indigo-600">
+              <${Plus} size=${14} strokeWidth=${3} />
             </div>
           </div>
           <div className="space-y-4">
@@ -182,20 +209,12 @@ const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
               <input type="text" className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-4 ring-indigo-50 font-bold" value=${name} onChange=${e => setName(e.target.value)} />
             </div>
             <div className="text-left space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Photo File Name</label>
-              <input type="text" className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-4 ring-indigo-50 font-bold" value=${profilePhoto} onChange=${e => setProfilePhoto(e.target.value)} />
-            </div>
-            <div className="text-left space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Photo URL</label>
-              <input type="text" className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-4 ring-indigo-50 font-bold" value=${photoUrl} onChange=${e => setPhotoUrl(e.target.value)} />
-            </div>
-            <div className="text-left space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
               <div className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-400 cursor-not-allowed border border-slate-100">${String(user.email || '')}</div>
             </div>
           </div>
           <div className="flex flex-col space-y-4 pt-6">
-            <button onClick=${handleUpdate} disabled=${saving} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-lg hover:bg-indigo-700 active:scale-95 transition-all">
+            <button onClick=${handleUpdate} disabled=${saving || uploadingPhoto} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-lg hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-50">
               ${saving ? html`<${Loader2} className="animate-spin mx-auto" />` : 'Update Profile'}
             </button>
             <button onClick=${onDelete} className="w-full bg-red-50 text-red-500 py-4 rounded-2xl font-black hover:bg-red-100 transition-all flex items-center justify-center space-x-2">
@@ -318,7 +337,7 @@ const FileDetailsModal = ({ file, user, onClose, onStar, onDelete, onUpdateFiles
             <button onClick=${handleExport} className="flex-1 bg-slate-900 text-white py-6 rounded-[32px] font-black flex items-center justify-center space-x-4 shadow-2xl active:scale-[0.98] transition-all">
               <${Download} size=${22} strokeWidth=${2.5} /> <span>Export</span>
             </button>
-            <button onClick=${e => onDelete(file.id, e)} className="p-6 bg-rose-50 text-rose-500 rounded-[32px] hover:bg-rose-500 hover:text-white transition-all shadow-lg active:scale-[0.98]"><${Trash2} size=${20} /></button>
+            <button onClick=${e => onDelete(file.id, e)} className="p-6 bg-rose-50 text-rose-500 rounded-[32px] hover:bg-rose-500 hover:text-white transition-all shadow-lg active:scale-[0.98]"><${Trash2} size=${22} /></button>
           </div>
         </div>
       </div>
