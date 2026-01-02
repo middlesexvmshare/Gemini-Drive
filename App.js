@@ -1,8 +1,8 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { html } from 'htm/react';
 import * as Lucide from 'lucide-react';
 import { analyzeFile } from './services/gemini.js';
+import { syncUserWithSupabase, updateSupabaseUser, deleteSupabaseUser } from './services/supabase.js';
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 
@@ -14,19 +14,11 @@ import {
   signInWithPopup,
   deleteUser
 } from "firebase/auth";
-import { 
-  getFirestore, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc 
-} from "firebase/firestore";
 
 const { 
   Plus, Search, LayoutGrid, FileText, Image: ImageIcon, File, 
   Star, Trash2, X, Download, AlertCircle, HardDrive, StickyNote, 
-  LogOut, User, Mail, Lock, Loader2, Folder, ChevronRight, ChevronLeft, Edit3, ArrowUpRight, Settings, ShieldAlert, Sparkles
+  LogOut, User, Mail, Lock, Loader2, Folder, ChevronRight, ChevronLeft, Edit3, ArrowUpRight, Settings, ShieldAlert, Sparkles, Camera
 } = Lucide;
 
 // --- Firebase Initialization ---
@@ -41,7 +33,6 @@ const firebaseConfig = {
 
 const appInstance = initializeApp(firebaseConfig);
 const auth = getAuth(appInstance);
-const db = getFirestore(appInstance);
 
 // --- IndexedDB Configuration ---
 const DB_NAME = 'GeminiDriveStorage';
@@ -76,17 +67,6 @@ const getAllFromDB = async () => {
   return new Promise(r => { tx.objectStore(STORE_NAME).getAll().onsuccess = (e) => r(e.target.result); });
 };
 
-const syncUserWithFirestore = async (user, displayName = '') => {
-  const userRef = doc(db, 'users', user.uid);
-  const userSnap = await getDoc(userRef);
-  if (!userSnap.exists()) {
-    const newUser = { uid: user.uid, name: displayName || user.displayName || user.email.split('@')[0], email: user.email, photoURL: user.photoURL || '', createdAt: Date.now() };
-    await setDoc(userRef, newUser);
-    return newUser;
-  }
-  return userSnap.data();
-};
-
 const FileIcon = ({ filename, className = "" }) => {
   const ext = filename.split('.').pop()?.toLowerCase() || 'unknown';
   return html`<span className="fiv-viv fiv-icon-${ext} ${className}"></span>`;
@@ -107,11 +87,11 @@ const AuthForm = ({ onAuth }) => {
     try {
       if (isLogin) {
         const res = await signInWithEmailAndPassword(auth, email, password);
-        const userData = await syncUserWithFirestore(res.user);
+        const userData = await syncUserWithSupabase(res.user);
         onAuth({ ...res.user, ...userData });
       } else {
         const res = await createUserWithEmailAndPassword(auth, email, password);
-        const userData = await syncUserWithFirestore(res.user, name);
+        const userData = await syncUserWithSupabase(res.user, name);
         onAuth({ ...res.user, ...userData });
       }
     } catch (err) { setError(err.message); } finally { setLoading(false); }
@@ -123,7 +103,7 @@ const AuthForm = ({ onAuth }) => {
     const provider = new GoogleAuthProvider();
     try {
       const res = await signInWithPopup(auth, provider);
-      const userData = await syncUserWithFirestore(res.user);
+      const userData = await syncUserWithSupabase(res.user);
       onAuth({ ...res.user, ...userData });
     } catch (err) { setLoading(false); setError(err.message); }
   };
@@ -188,21 +168,26 @@ const AuthForm = ({ onAuth }) => {
 
 const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
   const [name, setName] = useState(user.name || '');
+  const [profilePhoto, setProfilePhoto] = useState(user.profile_photo || '');
+  const [photoUrl, setPhotoUrl] = useState(user.photo_url || '');
   const [saving, setSaving] = useState(false);
 
   const handleUpdate = async () => {
     setSaving(true);
     try {
-      const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, { name });
-      onUpdate({ ...user, name });
+      const updated = await updateSupabaseUser(user.uid, { 
+        name, 
+        profile_photo: profilePhoto, 
+        photo_url: photoUrl 
+      });
+      onUpdate({ ...user, ...updated });
       onClose();
     } catch (e) { alert(e.message); } finally { setSaving(false); }
   };
 
   return html`
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-8 bg-slate-900/40 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-white rounded-[48px] w-full max-w-lg p-12 shadow-2xl border border-white">
+      <div className="bg-white rounded-[48px] w-full max-w-lg p-12 shadow-2xl border border-white max-h-[90vh] overflow-y-auto custom-scrollbar">
         <div className="flex justify-between items-center mb-10">
           <h2 className="text-3xl font-black text-slate-900">Account</h2>
           <button onClick=${onClose} className="p-3 hover:bg-slate-100 rounded-2xl transition-all"><${X} size=${24} /></button>
@@ -210,7 +195,7 @@ const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
         <div className="space-y-8 text-center">
           <div className="relative inline-block">
             <div className="w-28 h-28 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 font-black text-3xl border-4 border-white shadow-2xl overflow-hidden mx-auto">
-              ${user.photoURL ? html`<img src=${user.photoURL} className="w-full h-full object-cover" />` : user.name?.[0].toUpperCase()}
+              ${photoUrl ? html`<img src=${photoUrl} className="w-full h-full object-cover" />` : name?.[0]?.toUpperCase() || '?'}
             </div>
           </div>
           <div className="space-y-4">
@@ -219,13 +204,21 @@ const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
               <input type="text" className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-4 ring-indigo-50 font-bold" value=${name} onChange=${e => setName(e.target.value)} />
             </div>
             <div className="text-left space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Photo File Name</label>
+              <input type="text" className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-4 ring-indigo-50 font-bold" value=${profilePhoto} onChange=${e => setProfilePhoto(e.target.value)} />
+            </div>
+            <div className="text-left space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Photo URL</label>
+              <input type="text" className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-4 ring-indigo-50 font-bold" value=${photoUrl} onChange=${e => setPhotoUrl(e.target.value)} />
+            </div>
+            <div className="text-left space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
-              <div className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-400 cursor-not-allowed">${user.email}</div>
+              <div className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-400 cursor-not-allowed border border-slate-100">${user.email}</div>
             </div>
           </div>
           <div className="flex flex-col space-y-4 pt-6">
             <button onClick=${handleUpdate} disabled=${saving} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-lg hover:bg-indigo-700 active:scale-95 transition-all">
-              ${saving ? html`<${Loader2} className="animate-spin mx-auto" />` : 'Save Preferences'}
+              ${saving ? html`<${Loader2} className="animate-spin mx-auto" />` : 'Update Profile'}
             </button>
             <button onClick=${onDelete} className="w-full bg-red-50 text-red-500 py-4 rounded-2xl font-black hover:bg-red-100 transition-all flex items-center justify-center space-x-2">
               <${ShieldAlert} size=${18} />
@@ -256,11 +249,16 @@ const App = () => {
   useEffect(() => {
     return onAuthStateChanged(auth, async u => {
       if (u) {
-        const userData = await syncUserWithFirestore(u);
-        setUser({ ...u, ...userData });
-        getAllFromDB().then(data => {
-          setFiles(data.map(f => ({ ...f, previewUrl: URL.createObjectURL(f.data) })));
-        });
+        try {
+          const userData = await syncUserWithSupabase(u);
+          setUser({ ...u, ...userData });
+          getAllFromDB().then(data => {
+            setFiles(data.map(f => ({ ...f, previewUrl: URL.createObjectURL(f.data) })));
+          });
+        } catch (e) {
+          console.error("User sync error:", e);
+          setUser(u);
+        }
       } else { setUser(null); }
       setLoading(false);
     });
@@ -310,12 +308,11 @@ const App = () => {
   const handleDeleteAccount = async () => {
     if (!confirm("Are you absolutely sure? This will purge all your cloud data permanently.")) return;
     try {
-      const userRef = doc(db, 'users', user.uid);
-      await deleteDoc(userRef);
+      await deleteSupabaseUser(user.uid);
       await deleteUser(auth.currentUser);
       setUser(null);
       setShowProfile(false);
-    } catch (e) { alert("Security timeout. Please sign in again to delete account."); signOut(auth); }
+    } catch (e) { alert("Security restriction: Please sign in again to delete account."); signOut(auth); }
   };
 
   const filtered = useMemo(() => {
@@ -350,7 +347,6 @@ const App = () => {
           </nav>
 
           <div className="mt-auto space-y-6">
-            <!-- Storage Space Loader -->
             <div className="bg-gradient-to-br from-slate-50 to-white p-6 rounded-[32px] border border-slate-100 shadow-sm relative overflow-hidden group">
               <div className="relative z-10">
                 <div className="flex items-center justify-between mb-3">
@@ -370,18 +366,13 @@ const App = () => {
                     style=${{ width: `${usedPercentage}%` }}
                   />
                 </div>
-                ${usedPercentage > 85 && html`
-                  <p className="mt-3 text-[9px] font-black text-rose-500 uppercase tracking-widest flex items-center">
-                    <${AlertCircle} size=${10} className="mr-1" /> Space almost full
-                  </p>
-                `}
               </div>
               <div className="absolute top-[-20px] right-[-20px] w-24 h-24 bg-indigo-50/50 rounded-full blur-3xl group-hover:bg-indigo-100/50 transition-colors"></div>
             </div>
 
             <div className="flex items-center space-x-3 p-4 bg-slate-900 rounded-3xl group cursor-pointer hover:bg-slate-800 transition-all shadow-xl shadow-slate-200" onClick=${() => setShowProfile(true)}>
               <div className="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center text-white font-black text-sm overflow-hidden border border-white/5">
-                ${user.photoURL ? html`<img src=${user.photoURL} className="w-full h-full object-cover" />` : user.name?.[0].toUpperCase()}
+                ${user.photo_url ? html`<img src=${user.photo_url} className="w-full h-full object-cover" />` : user.name?.[0]?.toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-black truncate text-white uppercase tracking-tighter">${user.name || 'Cloud User'}</p>
