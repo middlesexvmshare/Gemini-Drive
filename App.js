@@ -1,8 +1,19 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { html } from 'htm/react';
 import * as Lucide from 'lucide-react';
 import { analyzeFile } from './services/gemini.js';
-import { syncUserWithSupabase, updateSupabaseUser, deleteSupabaseUser } from './services/supabase.js';
+import { 
+  syncUserWithSupabase, 
+  updateSupabaseUser, 
+  deleteSupabaseUser,
+  uploadFileToStorage,
+  deleteFileFromStorage,
+  getFilePublicUrl,
+  upsertFileMetadata,
+  fetchUserFilesMetadata,
+  deleteFileMetadata
+} from './services/supabase.js';
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 
@@ -16,7 +27,7 @@ import {
 } from "firebase/auth";
 
 const { 
-  Plus, Search, LayoutGrid, FileText, Image: ImageIcon, File, 
+  Plus, Search, LayoutGrid, FileText, Image: LucideImage, File, 
   Star, Trash2, X, Download, AlertCircle, HardDrive, StickyNote, 
   LogOut, User, Mail, Lock, Loader2, Folder, ChevronRight, ChevronLeft, Edit3, ArrowUpRight, Settings, ShieldAlert, Sparkles, Camera
 } = Lucide;
@@ -34,42 +45,9 @@ const firebaseConfig = {
 const appInstance = initializeApp(firebaseConfig);
 const auth = getAuth(appInstance);
 
-// --- IndexedDB Configuration ---
-const DB_NAME = 'GeminiDriveStorage';
-const STORE_NAME = 'files';
-
-const initDB = () => new Promise((resolve, reject) => {
-  const request = indexedDB.open(DB_NAME, 1);
-  request.onupgradeneeded = () => {
-    const database = request.result;
-    if (!database.objectStoreNames.contains(STORE_NAME)) database.createObjectStore(STORE_NAME, { keyPath: 'id' });
-  };
-  request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error);
-});
-
-const saveToDB = async (file) => {
-  const database = await initDB();
-  const tx = database.transaction(STORE_NAME, 'readwrite');
-  const { previewUrl, ...toSave } = file;
-  return new Promise(r => { tx.objectStore(STORE_NAME).put(toSave).onsuccess = r; });
-};
-
-const deleteFromDB = async (id) => {
-  const database = await initDB();
-  const tx = database.transaction(STORE_NAME, 'readwrite');
-  return new Promise(r => { tx.objectStore(STORE_NAME).delete(id).onsuccess = r; });
-};
-
-const getAllFromDB = async () => {
-  const database = await initDB();
-  const tx = database.transaction(STORE_NAME, 'readonly');
-  return new Promise(r => { tx.objectStore(STORE_NAME).getAll().onsuccess = (e) => r(e.target.result); });
-};
-
 const FileIcon = ({ filename, className = "" }) => {
-  const ext = filename.split('.').pop()?.toLowerCase() || 'unknown';
-  return html`<span className="fiv-viv fiv-icon-${ext} ${className}"></span>`;
+  const ext = String(filename || '').split('.').pop()?.toLowerCase() || 'unknown';
+  return html`<span className=${`fiv-viv fiv-icon-${ext} ${className}`}></span>`;
 };
 
 const AuthForm = ({ onAuth }) => {
@@ -94,7 +72,7 @@ const AuthForm = ({ onAuth }) => {
         const userData = await syncUserWithSupabase(res.user, name);
         onAuth({ ...res.user, ...userData });
       }
-    } catch (err) { setError(err.message); } finally { setLoading(false); }
+    } catch (err) { setError(err.message || 'Authentication failed'); } finally { setLoading(false); }
   };
 
   const handleGoogle = async () => {
@@ -105,7 +83,7 @@ const AuthForm = ({ onAuth }) => {
       const res = await signInWithPopup(auth, provider);
       const userData = await syncUserWithSupabase(res.user);
       onAuth({ ...res.user, ...userData });
-    } catch (err) { setLoading(false); setError(err.message); }
+    } catch (err) { setLoading(false); setError(err.message || 'Google sign-in failed'); }
   };
 
   return html`
@@ -126,7 +104,7 @@ const AuthForm = ({ onAuth }) => {
         ${error && html`
           <div className="mb-6 p-4 bg-red-50 text-red-600 rounded-2xl text-xs font-bold border border-red-100 flex items-center">
             <${AlertCircle} size=${16} className="mr-3 flex-shrink-0" /> 
-            <span>${error}</span>
+            <span>${String(error)}</span>
           </div>
         `}
 
@@ -182,7 +160,7 @@ const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
       });
       onUpdate({ ...user, ...updated });
       onClose();
-    } catch (e) { alert(e.message); } finally { setSaving(false); }
+    } catch (e) { alert(e.message || 'Update failed'); } finally { setSaving(false); }
   };
 
   return html`
@@ -195,7 +173,7 @@ const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
         <div className="space-y-8 text-center">
           <div className="relative inline-block">
             <div className="w-28 h-28 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 font-black text-3xl border-4 border-white shadow-2xl overflow-hidden mx-auto">
-              ${photoUrl ? html`<img src=${photoUrl} className="w-full h-full object-cover" />` : name?.[0]?.toUpperCase() || '?'}
+              ${photoUrl ? html`<img src=${photoUrl} className="w-full h-full object-cover" />` : (String(name || '?')[0].toUpperCase())}
             </div>
           </div>
           <div className="space-y-4">
@@ -213,7 +191,7 @@ const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
             </div>
             <div className="text-left space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
-              <div className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-400 cursor-not-allowed border border-slate-100">${user.email}</div>
+              <div className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-slate-400 cursor-not-allowed border border-slate-100">${String(user.email || '')}</div>
             </div>
           </div>
           <div className="flex flex-col space-y-4 pt-6">
@@ -252,11 +230,21 @@ const App = () => {
         try {
           const userData = await syncUserWithSupabase(u);
           setUser({ ...u, ...userData });
-          getAllFromDB().then(data => {
-            setFiles(data.map(f => ({ ...f, previewUrl: URL.createObjectURL(f.data) })));
-          });
+          const dbFiles = await fetchUserFilesMetadata(u.uid);
+          const processedFiles = dbFiles.map(f => ({
+            id: f.file_uuid,
+            name: String(f.name || 'Untitled'),
+            type: String(f.type || 'other'),
+            size: Number(f.size || 0),
+            date: f.created_at,
+            starred: Boolean(f.starred),
+            analysis: String(f.analysis || ''),
+            notes: String(f.notes || ''),
+            previewUrl: getFilePublicUrl(u.uid, f.file_uuid)
+          }));
+          setFiles(processedFiles);
         } catch (e) {
-          console.error("User sync error:", e);
+          console.error("Supabase init error:", e);
           setUser(u);
         }
       } else { setUser(null); }
@@ -270,18 +258,43 @@ const App = () => {
     setUploading(true);
     for (const f of list) {
       const type = f.type.startsWith('image/') ? 'image' : (f.type.includes('pdf') || f.type.startsWith('text/') ? 'text' : 'other');
-      const id = crypto.randomUUID();
-      const newFile = { id, name: f.name, type, size: f.size, date: Date.now(), data: f, starred: false, analysis: '', notes: '', ownerUid: user.uid };
-      await saveToDB(newFile);
-      setFiles(prev => [{ ...newFile, previewUrl: URL.createObjectURL(f) }, ...prev]);
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-        const res = await analyzeFile(f.name, ev.target.result, f.type);
-        const updated = { ...newFile, analysis: res };
-        await saveToDB(updated);
-        setFiles(prev => prev.map(file => file.id === id ? { ...file, analysis: res } : file));
-      };
-      reader.readAsDataURL(f);
+      const fileId = crypto.randomUUID();
+      
+      try {
+        await uploadFileToStorage(user.uid, fileId, f);
+        const publicUrl = getFilePublicUrl(user.uid, fileId);
+        const metadata = {
+          name: String(f.name),
+          type: String(type),
+          size: Number(f.size),
+          notes: '',
+          analysis: 'Analysis pending...',
+          starred: false
+        };
+        await upsertFileMetadata(user.uid, fileId, metadata);
+
+        const newFileObj = { ...metadata, id: fileId, date: new Date().toISOString(), previewUrl: publicUrl };
+        setFiles(prev => [newFileObj, ...prev]);
+
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+          const analysisResult = await analyzeFile(f.name, ev.target.result, f.type);
+          const analysisStr = String(analysisResult || 'Analysis complete.');
+          // Include mandatory 'name' and other fields to avoid NOT NULL violations
+          await upsertFileMetadata(user.uid, fileId, { 
+            name: String(f.name),
+            type: String(type),
+            size: Number(f.size),
+            analysis: analysisStr 
+          });
+          setFiles(prev => prev.map(item => item.id === fileId ? { ...item, analysis: analysisStr } : item));
+        };
+        reader.readAsDataURL(f);
+
+      } catch (err) {
+        console.error("Upload error:", err);
+        alert("Upload failed: " + (err.message || 'Unknown error'));
+      }
     }
     setUploading(false);
     e.target.value = '';
@@ -289,20 +302,54 @@ const App = () => {
 
   const removeFile = async (id, e) => {
     e.stopPropagation();
-    if (!confirm("Remove this object permanently?")) return;
-    await deleteFromDB(id);
-    setFiles(prev => prev.filter(f => f.id !== id));
-    if (selectedFile?.id === id) setSelectedFile(null);
+    if (!confirm("Remove this object from cloud storage?")) return;
+    try {
+      await deleteFileFromStorage(user.uid, id);
+      await deleteFileMetadata(id);
+      setFiles(prev => prev.filter(f => f.id !== id));
+      if (selectedFile?.id === id) setSelectedFile(null);
+    } catch (err) {
+      alert("Delete failed: " + (err.message || 'Unknown error'));
+    }
   };
 
   const toggleStar = async (id, e) => {
     e.stopPropagation();
     const file = files.find(f => f.id === id);
     if (!file) return;
-    const updated = { ...file, starred: !file.starred };
-    await saveToDB(updated);
-    setFiles(prev => prev.map(f => f.id === id ? updated : f));
-    if (selectedFile?.id === id) setSelectedFile(updated);
+    const newStarred = !file.starred;
+    try {
+      // Must include mandatory 'name', 'type', 'size' for Postgres NOT NULL constraints during UPSERT
+      await upsertFileMetadata(user.uid, id, { 
+        name: String(file.name),
+        type: String(file.type),
+        size: Number(file.size),
+        starred: newStarred 
+      });
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, starred: newStarred } : f));
+      if (selectedFile?.id === id) setSelectedFile({ ...selectedFile, starred: newStarred });
+    } catch (err) {
+      alert("Update failed: " + (err.message || 'Unknown error'));
+    }
+  };
+
+  const handleUpdateNotes = async (id, notes) => {
+    const file = files.find(f => f.id === id);
+    if (!file) return;
+    const notesStr = String(notes || '');
+    try {
+      // Must include mandatory 'name', 'type', 'size' for Postgres NOT NULL constraints during UPSERT
+      await upsertFileMetadata(user.uid, id, { 
+        name: String(file.name),
+        type: String(file.type),
+        size: Number(file.size),
+        notes: notesStr 
+      });
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, notes: notesStr } : f));
+      if (selectedFile?.id === id) setSelectedFile({ ...selectedFile, notes: notesStr });
+    } catch (err) {
+      alert("Save failed: " + (err.message || 'Unknown error'));
+    }
   };
 
   const handleDeleteAccount = async () => {
@@ -317,8 +364,10 @@ const App = () => {
 
   const filtered = useMemo(() => {
     return files.filter(f => {
-      const matchesSearch = f.name.toLowerCase().includes(filters.search.toLowerCase()) || 
-                            (f.analysis && f.analysis.toLowerCase().includes(filters.search.toLowerCase()));
+      const name = String(f.name || '').toLowerCase();
+      const analysis = String(f.analysis || '').toLowerCase();
+      const search = String(filters.search || '').toLowerCase();
+      const matchesSearch = name.includes(search) || analysis.includes(search);
       const matchesStar = !filters.starred || f.starred;
       const matchesType = filters.type === 'all' || f.type === filters.type;
       return matchesSearch && matchesStar && matchesType;
@@ -327,6 +376,11 @@ const App = () => {
 
   if (loading) return html`<div className="h-screen flex items-center justify-center bg-[#f8fafc]"><${Loader2} className="animate-spin text-indigo-600" size=${48} /></div>`;
   if (!user) return html`<${AuthForm} onAuth=${setUser} />`;
+
+  const UserAvatar = () => {
+    if (user.photo_url) return html`<img src=${user.photo_url} className="w-full h-full object-cover" />`;
+    return html`<span>${String(user.name || 'C')[0].toUpperCase()}</span>`;
+  };
 
   return html`
     <div className="flex h-screen bg-white text-slate-900 overflow-hidden font-['Inter']">
@@ -342,7 +396,7 @@ const App = () => {
              <button onClick=${() => setFilters({ ...filters, starred: false, type: 'all' })} className=${`w-full flex items-center space-x-3 p-4 rounded-2xl transition-all ${!filters.starred && filters.type === 'all' ? 'bg-indigo-50 text-indigo-700 font-black shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}><${LayoutGrid} size=${20} /> <span className="text-sm">All Files</span></button>
              <button onClick=${() => setFilters({ ...filters, starred: true })} className=${`w-full flex items-center space-x-3 p-4 rounded-2xl transition-all ${filters.starred ? 'bg-indigo-50 text-indigo-700 font-black shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}><${Star} size=${20} /> <span className="text-sm">Favorites</span></button>
              <div className="pt-8 pb-3 px-4 text-[10px] font-black text-slate-300 uppercase tracking-[0.25em]">Cloud Category</div>
-             <button onClick=${() => setFilters({ ...filters, starred: false, type: 'image' })} className=${`w-full flex items-center space-x-3 p-4 rounded-2xl transition-all ${filters.type === 'image' ? 'bg-indigo-50 text-indigo-700 font-black shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}><${ImageIcon} size=${20} /> <span className="text-sm">Photos</span></button>
+             <button onClick=${() => setFilters({ ...filters, starred: false, type: 'image' })} className=${`w-full flex items-center space-x-3 p-4 rounded-2xl transition-all ${filters.type === 'image' ? 'bg-indigo-50 text-indigo-700 font-black shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}><${LucideImage} size=${20} /> <span className="text-sm">Photos</span></button>
              <button onClick=${() => setFilters({ ...filters, starred: false, type: 'text' })} className=${`w-full flex items-center space-x-3 p-4 rounded-2xl transition-all ${filters.type === 'text' ? 'bg-indigo-50 text-indigo-700 font-black shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}><${FileText} size=${20} /> <span className="text-sm">Documents</span></button>
           </nav>
 
@@ -367,16 +421,15 @@ const App = () => {
                   />
                 </div>
               </div>
-              <div className="absolute top-[-20px] right-[-20px] w-24 h-24 bg-indigo-50/50 rounded-full blur-3xl group-hover:bg-indigo-100/50 transition-colors"></div>
             </div>
 
             <div className="flex items-center space-x-3 p-4 bg-slate-900 rounded-3xl group cursor-pointer hover:bg-slate-800 transition-all shadow-xl shadow-slate-200" onClick=${() => setShowProfile(true)}>
               <div className="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center text-white font-black text-sm overflow-hidden border border-white/5">
-                ${user.photo_url ? html`<img src=${user.photo_url} className="w-full h-full object-cover" />` : user.name?.[0]?.toUpperCase()}
+                <${UserAvatar} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-black truncate text-white uppercase tracking-tighter">${user.name || 'Cloud User'}</p>
-                <p className="text-[9px] font-bold text-slate-400 truncate tracking-widest uppercase">Manage Account</p>
+                <p className="text-xs font-black truncate text-white uppercase tracking-tighter">${String(user.name || 'Cloud User')}</p>
+                <p className="text-[9px] font-bold text-slate-400 truncate tracking-widest uppercase">Account</p>
               </div>
               <button onClick=${(e) => { e.stopPropagation(); signOut(auth); }} className="text-slate-500 hover:text-rose-400 transition-colors"><${LogOut} size=${18} /></button>
             </div>
@@ -393,7 +446,7 @@ const App = () => {
             </button>
             <div className="relative w-full group">
               <${Search} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors" size=${20} />
-              <input type="text" placeholder="Search through your cloud intelligence..." className="w-full pl-14 pr-6 py-4 bg-slate-50 border border-transparent focus:border-indigo-100 focus:bg-white rounded-3xl outline-none transition-all text-sm font-semibold shadow-inner" value=${filters.search} onChange=${e => setFilters({ ...filters, search: e.target.value })} />
+              <input type="text" placeholder="Search history..." className="w-full pl-14 pr-6 py-4 bg-slate-50 border border-transparent focus:border-indigo-100 focus:bg-white rounded-3xl outline-none transition-all text-sm font-semibold shadow-inner" value=${filters.search} onChange=${e => setFilters({ ...filters, search: e.target.value })} />
             </div>
           </div>
 
@@ -409,22 +462,15 @@ const App = () => {
         <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
           ${uploading && html`
             <div className="mb-12 flex items-center space-x-4 bg-slate-900 p-6 rounded-[32px] shadow-2xl animate-in slide-in-from-top duration-700">
-              <div className="relative">
-                <${Loader2} className="animate-spin text-indigo-400" size=${24} />
-                <${Sparkles} className="absolute -top-1 -right-1 text-white animate-pulse" size=${10} />
-              </div>
-              <span className="text-white text-xs font-black uppercase tracking-[0.25em]">Gemini is processing multimodal data...</span>
+              <${Loader2} className="animate-spin text-indigo-400" size=${24} />
+              <span className="text-white text-xs font-black uppercase tracking-[0.25em]">Syncing cloud multimodal data...</span>
             </div>
           `}
 
           ${filtered.length === 0 ? html`
             <div className="h-full flex flex-col items-center justify-center text-slate-100 py-32 animate-in fade-in duration-1000">
-              <div className="relative">
-                 <${HardDrive} size=${100} strokeWidth=${1} className="opacity-10 mb-8 text-indigo-900" />
-                 <div className="absolute inset-0 bg-indigo-50/20 blur-3xl rounded-full"></div>
-              </div>
-              <p className="text-2xl font-black text-slate-300 uppercase tracking-[0.4em]">Cloud Clear</p>
-              <p className="text-xs font-bold text-slate-400 mt-4 uppercase tracking-widest">Your smart storage is empty</p>
+              <${HardDrive} size=${100} strokeWidth=${1} className="opacity-10 mb-8 text-indigo-900" />
+              <p className="text-2xl font-black text-slate-300 uppercase tracking-[0.4em]">Empty Space</p>
             </div>
           ` : html`
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10">
@@ -432,17 +478,16 @@ const App = () => {
                 <div key=${f.id} onClick=${() => setSelectedFile(f)} className="group bg-white p-6 rounded-[48px] border border-slate-100 hover:border-indigo-100 hover:shadow-2xl hover:shadow-indigo-500/5 transition-all duration-500 cursor-pointer relative flex flex-col">
                   <div className="aspect-[1/1] bg-slate-50 rounded-[40px] mb-6 flex items-center justify-center overflow-hidden border border-slate-50/50 relative">
                     ${f.type === 'image' ? html`<img src=${f.previewUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" />` : html`<${FileIcon} filename=${f.name} className="fiv-viv-lg opacity-40 group-hover:scale-110 transition-transform duration-500" />`}
-                    <div className="absolute inset-0 bg-indigo-900/0 group-hover:bg-indigo-900/5 transition-colors duration-500"></div>
                   </div>
                   <div className="flex-1 min-w-0 px-2">
-                    <h3 className="font-black text-slate-800 truncate text-sm mb-2">${f.name}</h3>
+                    <h3 className="font-black text-slate-800 truncate text-sm mb-2">${String(f.name)}</h3>
                     <div className="flex items-center justify-between">
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">${(f.size / 1024).toFixed(0)} KB • ${new Date(f.date).toLocaleDateString()}</p>
-                      <span className="bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-lg text-[9px] font-black text-slate-500 uppercase">${f.type}</span>
+                      <span className="bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-lg text-[9px] font-black text-slate-500 uppercase">${String(f.type)}</span>
                     </div>
                   </div>
-                  <div className="absolute top-6 right-6 flex space-x-2 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0">
-                    <button onClick=${e => toggleStar(f.id, e)} className=${`p-3 rounded-2xl shadow-xl transition-all active:scale-90 ${f.starred ? 'bg-amber-400 text-white' : 'bg-white text-slate-400 hover:text-amber-500 border border-slate-100'}`}><${Star} size=${18} fill=${f.starred ? "currentColor" : "none"} /></button>
+                  <div className="absolute top-6 right-6 flex space-x-2 opacity-0 group-hover:opacity-100 transition-all duration-300">
+                    <button onClick=${e => toggleStar(f.id, e)} className=${`p-3 rounded-2xl shadow-xl transition-all active:scale-90 ${f.starred ? 'bg-amber-400 text-white' : 'bg-white text-slate-400 border border-slate-100'}`}><${Star} size=${18} fill=${f.starred ? "currentColor" : "none"} /></button>
                     <button onClick=${e => removeFile(f.id, e)} className="p-3 bg-white border border-slate-100 rounded-2xl shadow-xl text-slate-400 hover:text-rose-500 transition-all active:scale-90"><${Trash2} size=${18} /></button>
                   </div>
                 </div>
@@ -464,8 +509,7 @@ const App = () => {
               ${selectedFile.type === 'image' ? html`<img src=${selectedFile.previewUrl} className="max-h-full max-w-full object-contain rounded-[48px] shadow-2xl border-8 border-white" />` : html`
                 <div className="text-center">
                    <div className="w-56 h-56 bg-white rounded-[48px] flex items-center justify-center shadow-2xl mx-auto mb-12 border border-slate-100"><${FileIcon} filename=${selectedFile.name} className="fiv-viv-lg scale-150" /></div>
-                   <p className="text-4xl font-black text-slate-900 mb-4 tracking-tight">${selectedFile.name}</p>
-                   <p className="text-xs text-slate-400 uppercase tracking-[0.3em] font-black">Multimodal Preview Restricted</p>
+                   <p className="text-4xl font-black text-slate-900 mb-4 tracking-tight">${String(selectedFile.name)}</p>
                 </div>
               `}
             </div>
@@ -473,12 +517,12 @@ const App = () => {
             <div className="w-full md:w-[500px] p-20 flex flex-col bg-white overflow-y-auto custom-scrollbar">
               <div className="mb-14">
                 <div className="flex items-center justify-between mb-6">
-                  <span className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.4em] block">Intelligence Metadata</span>
-                  <button onClick=${e => toggleStar(selectedFile.id, e)} className=${`transition-all ${selectedFile.starred ? 'text-amber-500' : 'text-slate-200 hover:text-amber-500'}`}><${Star} size=${24} fill=${selectedFile.starred ? "currentColor" : "none"} /></button>
+                  <span className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.4em] block">Cloud Intelligence</span>
+                  <button onClick=${e => toggleStar(selectedFile.id, e)} className=${`transition-all ${selectedFile.starred ? 'text-amber-500' : 'text-slate-200'}`}><${Star} size=${24} fill=${selectedFile.starred ? "currentColor" : "none"} /></button>
                 </div>
-                <h2 className="text-5xl font-black text-slate-900 break-words leading-[1.1] mb-6 tracking-tight">${selectedFile.name}</h2>
+                <h2 className="text-5xl font-black text-slate-900 break-words leading-[1.1] mb-6 tracking-tight">${String(selectedFile.name)}</h2>
                 <div className="flex space-x-3">
-                   <span className="bg-indigo-50 text-indigo-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-indigo-100">${selectedFile.type}</span>
+                   <span className="bg-indigo-50 text-indigo-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-indigo-100">${String(selectedFile.type)}</span>
                    <span className="bg-fuchsia-50 text-fuchsia-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-fuchsia-100">${(selectedFile.size / (1024*1024)).toFixed(2)} MB</span>
                 </div>
               </div>
@@ -487,30 +531,31 @@ const App = () => {
                 <section>
                   <div className="flex items-center space-x-3 mb-8">
                     <div className="bg-indigo-600 p-2.5 rounded-2xl shadow-lg shadow-indigo-100"><${ArrowUpRight} className="text-white" size=${18} strokeWidth=${3} /></div>
-                    <span className="text-[11px] font-black text-indigo-600 uppercase tracking-[0.3em]">Gemini 3 Flash Insights</span>
+                    <span className="text-[11px] font-black text-indigo-600 uppercase tracking-[0.3em]">AI Summary</span>
                   </div>
-                  <div className="bg-gradient-to-br from-indigo-50/50 to-white p-10 rounded-[48px] text-sm leading-relaxed text-indigo-900 border border-indigo-100/50 shadow-inner relative overflow-hidden group">
-                    <div className="relative z-10">
-                      ${selectedFile.analysis || html`<div className="flex items-center space-x-3 text-slate-400 font-bold"><${Loader2} className="animate-spin" size=${18} /> <span>Thinking...</span></div>`}
-                    </div>
-                    <div className="absolute bottom-[-20px] right-[-20px] opacity-10"><${Sparkles} size=${64} /></div>
+                  <div className="bg-gradient-to-br from-indigo-50/50 to-white p-10 rounded-[48px] text-sm leading-relaxed text-indigo-900 border border-indigo-100/50 shadow-inner">
+                    ${selectedFile.analysis ? String(selectedFile.analysis) : html`<div className="flex items-center space-x-3 text-slate-400 font-bold"><${Loader2} className="animate-spin" size=${18} /> <span>Thinking...</span></div>`}
                   </div>
                 </section>
 
                 <section>
                   <div className="flex items-center space-x-3 mb-8">
                     <div className="bg-slate-900 p-2.5 rounded-2xl shadow-lg shadow-slate-200"><${StickyNote} className="text-white" size=${18} strokeWidth=${2.5} /></div>
-                    <span className="text-[11px] font-black text-slate-900 uppercase tracking-[0.3em]">User Annotation</span>
+                    <span className="text-[11px] font-black text-slate-900 uppercase tracking-[0.3em]">Annotations</span>
                   </div>
-                  <div className="bg-slate-50 p-10 rounded-[48px] text-sm italic text-slate-400 border border-slate-100 font-medium">
-                    No custom annotations added to this object.
-                  </div>
+                  <textarea 
+                    className="w-full bg-slate-50 p-10 rounded-[48px] text-sm text-slate-600 border border-slate-100 font-medium resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 transition-all"
+                    placeholder="Add notes..."
+                    value=${String(selectedFile.notes)}
+                    rows=${4}
+                    onChange=${e => handleUpdateNotes(selectedFile.id, e.target.value)}
+                  />
                 </section>
               </div>
 
               <div className="mt-20 flex space-x-5">
-                <button onClick=${() => { const a = document.createElement('a'); a.href = selectedFile.previewUrl; a.download = selectedFile.name; a.click(); }} className="flex-1 bg-slate-900 text-white py-6 rounded-[32px] font-black flex items-center justify-center space-x-4 shadow-2xl active:scale-[0.98] transition-all hover:bg-slate-800">
-                  <${Download} size=${22} strokeWidth=${2.5} /> <span>Export Data</span>
+                <button onClick=${() => { const a = document.createElement('a'); a.href = selectedFile.previewUrl; a.download = selectedFile.name; a.click(); }} className="flex-1 bg-slate-900 text-white py-6 rounded-[32px] font-black flex items-center justify-center space-x-4 shadow-2xl active:scale-[0.98] transition-all">
+                  <${Download} size=${22} strokeWidth=${2.5} /> <span>Export</span>
                 </button>
                 <button onClick=${e => removeFile(selectedFile.id, e)} className="p-6 bg-rose-50 text-rose-500 rounded-[32px] hover:bg-rose-500 hover:text-white transition-all shadow-lg active:scale-[0.98]"><${Trash2} size=${28} /></button>
               </div>

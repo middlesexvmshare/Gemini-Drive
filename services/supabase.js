@@ -1,3 +1,4 @@
+
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = 'https://vxhbwnmrjrthodleeprb.supabase.co';
@@ -6,10 +7,13 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /**
- * Deterministically converts a string (Firebase UID) into a valid UUID hex format.
+ * Deterministically converts any string (like a Firebase UID) into a valid UUID hex format.
  */
-const toUUID = async (str) => {
+export const toUUID = async (str) => {
   if (!str) return null;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(str)) return str.toLowerCase();
+
   const encoder = new TextEncoder();
   const data = encoder.encode(str);
   const hashBuffer = await crypto.subtle.digest('SHA-1', data);
@@ -19,63 +23,84 @@ const toUUID = async (str) => {
 };
 
 /**
- * Synchronizes Firebase user with Supabase 'users' table.
+ * Sync User with Supabase 'users' table.
  */
 export const syncUserWithSupabase = async (user, displayName = '') => {
   const uuid = await toUUID(user.uid);
-  
-  const userData = {
+  const newUser = {
     uuid: uuid,
-    name: displayName || user.displayName || user.email?.split('@')[0] || 'Cloud User',
+    name: displayName || user.displayName || user.email?.split('@')[0] || 'Anonymous User',
     email: user.email,
     photo_url: user.photoURL || '',
-    profile_photo: user.photoURL ? 'profile_photo_url' : 'default_avatar'
+    profile_photo: user.photoURL ? 'profile_image' : 'default_avatar'
   };
 
   try {
-    // Upsert the user record
-    const { data, error } = await supabase
-      .from('users')
-      .upsert(userData, { onConflict: 'uuid' })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Supabase sync error:', error.message);
-      return userData;
-    }
+    const { data, error } = await supabase.from('users').upsert(newUser, { onConflict: 'uuid' }).select().single();
+    if (error) throw error;
     return data;
   } catch (err) {
-    console.error('Supabase sync exception:', err);
-    return userData;
+    console.error('Supabase user sync failed:', err.message);
+    return newUser;
   }
 };
 
 /**
- * Updates user profile in Supabase.
+ * Metadata & Storage Operations
  */
-export const updateSupabaseUser = async (rawUid, updates) => {
-  const uuid = await toUUID(rawUid);
-  const { data, error } = await supabase
-    .from('users')
-    .update(updates)
-    .eq('uuid', uuid)
-    .select()
-    .single();
 
+export const uploadFileToStorage = async (rawUid, fileId, fileBlob) => {
+  const path = `${rawUid}/${fileId}`;
+  const { data, error } = await supabase.storage.from('user_uploads').upload(path, fileBlob);
   if (error) throw error;
   return data;
 };
 
-/**
- * Deletes user record from Supabase.
- */
+export const deleteFileFromStorage = async (rawUid, fileId) => {
+  const path = `${rawUid}/${fileId}`;
+  const { error } = await supabase.storage.from('user_uploads').remove([path]);
+  if (error) throw error;
+};
+
+export const getFilePublicUrl = (rawUid, fileId) => {
+  const path = `${rawUid}/${fileId}`;
+  const { data } = supabase.storage.from('user_uploads').getPublicUrl(path);
+  return data.publicUrl;
+};
+
+export const upsertFileMetadata = async (rawUid, fileId, metadata) => {
+  const user_uuid = await toUUID(rawUid);
+  const payload = {
+    user_uuid,
+    file_uuid: fileId,
+    ...metadata
+  };
+  const { data, error } = await supabase.from('files').upsert(payload, { onConflict: 'file_uuid' }).select().single();
+  if (error) throw error;
+  return data;
+};
+
+export const fetchUserFilesMetadata = async (rawUid) => {
+  const user_uuid = await toUUID(rawUid);
+  const { data, error } = await supabase.from('files').select('*').eq('user_uuid', user_uuid).order('created_at', { ascending: false });
+  if (error) throw error;
+  return data;
+};
+
+export const deleteFileMetadata = async (fileId) => {
+  const { error } = await supabase.from('files').delete().eq('file_uuid', fileId);
+  if (error) throw error;
+};
+
+export const updateSupabaseUser = async (rawUid, updates) => {
+  const uuid = await toUUID(rawUid);
+  const { data, error } = await supabase.from('users').update(updates).eq('uuid', uuid).select().single();
+  if (error) throw error;
+  return data;
+};
+
 export const deleteSupabaseUser = async (rawUid) => {
   const uuid = await toUUID(rawUid);
-  const { error } = await supabase
-    .from('users')
-    .delete()
-    .eq('uuid', uuid);
-
+  const { error } = await supabase.from('users').delete().eq('uuid', uuid);
   if (error) throw error;
 };
