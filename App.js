@@ -276,7 +276,7 @@ const FileDetailsModal = ({ file, user, onClose, onStar, onDelete, onUpdateFiles
           <div className="mb-14">
             <div className="flex items-center justify-between mb-6">
               <span className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.4em] block">Cloud Intelligence</span>
-              <button onClick=${e => onStar(file.id, e)} className=${`transition-all ${file.starred ? 'text-amber-500' : 'text-slate-200 hover:text-amber-500'}`}><${Star} size=${24} fill=${file.starred ? "currentColor" : "none"} /></button>
+              <button onClick=${e => onStar(file.id, e)} className=${`transition-all ${file.starred ? 'text-amber-500' : 'text-slate-200 hover:text-amber-500'}`}><${Star} size=${20} fill=${file.starred ? "currentColor" : "none"} /></button>
             </div>
             <h2 className="text-5xl font-black text-slate-900 break-words leading-[1.1] mb-6 tracking-tight">${String(file.name)}</h2>
             <div className="flex space-x-3">
@@ -318,7 +318,7 @@ const FileDetailsModal = ({ file, user, onClose, onStar, onDelete, onUpdateFiles
             <button onClick=${handleExport} className="flex-1 bg-slate-900 text-white py-6 rounded-[32px] font-black flex items-center justify-center space-x-4 shadow-2xl active:scale-[0.98] transition-all">
               <${Download} size=${22} strokeWidth=${2.5} /> <span>Export</span>
             </button>
-            <button onClick=${e => onDelete(file.id, e)} className="p-6 bg-rose-50 text-rose-500 rounded-[32px] hover:bg-rose-500 hover:text-white transition-all shadow-lg active:scale-[0.98]"><${Trash2} size=${28} /></button>
+            <button onClick=${e => onDelete(file.id, e)} className="p-6 bg-rose-50 text-rose-500 rounded-[32px] hover:bg-rose-500 hover:text-white transition-all shadow-lg active:scale-[0.98]"><${Trash2} size=${20} /></button>
           </div>
         </div>
       </div>
@@ -593,8 +593,8 @@ const App = () => {
                     </div>
                   </div>
                   <div className="absolute top-6 right-6 flex space-x-2 opacity-0 group-hover:opacity-100 transition-all duration-300">
-                    <button onClick=${e => toggleStar(f.id, e)} className=${`p-3 rounded-2xl shadow-xl transition-all active:scale-90 ${f.starred ? 'bg-amber-400 text-white' : 'bg-white text-slate-400 border border-slate-100 hover:text-amber-500'}`}><${Star} size={18} fill=${f.starred ? "currentColor" : "none"} /></button>
-                    <button onClick=${e => removeFile(f.id, e)} className="p-3 bg-white border border-slate-100 rounded-2xl shadow-xl text-slate-400 hover:text-rose-500 transition-all active:scale-90"><${Trash2} size=${18} /></button>
+                    <button onClick=${e => toggleStar(f.id, e)} className=${`p-2.5 rounded-2xl shadow-xl transition-all active:scale-90 ${f.starred ? 'bg-amber-400 text-white' : 'bg-white text-slate-400 border border-slate-100 hover:text-amber-500'}`}><${Star} size=${15} fill=${f.starred ? "currentColor" : "none"} /></button>
+                    <button onClick=${e => removeFile(f.id, e)} className="p-2.5 bg-white border border-slate-100 rounded-2xl shadow-xl text-slate-400 hover:text-rose-500 transition-all active:scale-90"><${Trash2} size=${15} /></button>
                   </div>
                 </div>
               `)}
@@ -624,8 +624,8 @@ const App = () => {
                       <td className="px-8 py-6 text-xs font-black text-slate-400 uppercase tracking-tight">${new Date(f.date).toLocaleDateString()}</td>
                       <td className="px-8 py-6 text-right">
                         <div className="flex items-center justify-end space-x-2 opacity-0 group-hover:opacity-100 transition-all">
-                           <button onClick=${e => toggleStar(f.id, e)} className=${`p-2.5 rounded-xl transition-all ${f.starred ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500'}`}><${Star} size=${18} fill=${f.starred ? "currentColor" : "none"} /></button>
-                           <button onClick=${e => removeFile(f.id, e)} className="p-2.5 rounded-xl text-slate-300 hover:text-rose-500 transition-all"><${Trash2} size=${18} /></button>
+                           <button onClick=${e => toggleStar(f.id, e)} className=${`p-2.5 rounded-xl transition-all ${f.starred ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500'}`}><${Star} size=${16} fill=${f.starred ? "currentColor" : "none"} /></button>
+                           <button onClick=${e => removeFile(f.id, e)} className="p-2.5 rounded-xl text-slate-300 hover:text-rose-500 transition-all"><${Trash2} size=${16} /></button>
                         </div>
                       </td>
                     </tr>
