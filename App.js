@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { html } from 'htm/react';
 import * as Lucide from 'lucide-react';
@@ -30,8 +29,9 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 // --- Components ---
 
 const FileIcon = ({ filename, className = "" }) => {
-  if (!filename) return html`<span className="fiv-viv ${className}"></span>`;
-  const parts = filename.split('.');
+  const safeName = String(filename || '');
+  if (!safeName) return html`<span className="fiv-viv ${className}"></span>`;
+  const parts = safeName.split('.');
   const ext = parts.length > 1 ? parts.pop().toLowerCase() : 'unknown';
   return html`<span className="fiv-viv fiv-icon-${ext} ${className}"></span>`;
 };
@@ -133,17 +133,14 @@ const App = () => {
       const storagePath = `uploads/${user.id}/${fileId}/${f.name}`;
 
       try {
-        // 1. Upload to Storage
         const { error: storageErr } = await supabase.storage.from('file_uploads').upload(storagePath, f);
         if (storageErr) throw storageErr;
 
-        // 2. Prepare AI Analysis (multimodal if image)
         const reader = new FileReader();
         reader.onload = async (ev) => {
           const content = ev.target.result;
           const analysis = await analyzeFile(f.name, content, f.type);
           
-          // 3. Save Metadata
           const { data, error: dbErr } = await supabase.from('user_files').insert([{
             user_id: user.id,
             name: f.name,
@@ -166,10 +163,8 @@ const App = () => {
     if (e) e.stopPropagation();
     if (!confirm("Destroy this storage node?")) return;
     
-    // 1. Delete Storage Binary
     await supabase.storage.from('file_uploads').remove([file.storage_path]);
     
-    // 2. Delete Metadata
     const { error } = await supabase.from('user_files').delete().eq('id', file.id);
     if (!error) {
       setFiles(prev => prev.filter(f => f.id !== file.id));
@@ -195,13 +190,17 @@ const App = () => {
   };
 
   const filtered = useMemo(() => {
+    const searchVal = String(filters.search || '').toLowerCase();
     return files.filter(f => {
-      const s = filters.search.toLowerCase();
-      const matchesSearch = (f.name || '').toLowerCase().includes(s) || (f.analysis && f.analysis.toLowerCase().includes(s));
+      const safeName = String(f.name || '').toLowerCase();
+      const safeAnalysis = String(f.analysis || '').toLowerCase();
+      const safeMime = String(f.mime_type || '').toLowerCase();
+
+      const matchesSearch = safeName.includes(searchVal) || safeAnalysis.includes(searchVal);
       const matchesStar = !filters.starred || f.starred;
       const matchesType = filters.type === 'all' || 
-        (filters.type === 'image' && f.mime_type && f.mime_type.startsWith('image/')) ||
-        (filters.type === 'doc' && f.mime_type && (f.mime_type.includes('document') || f.mime_type.includes('text') || f.mime_type.includes('sheet')));
+        (filters.type === 'image' && safeMime.startsWith('image/')) ||
+        (filters.type === 'doc' && (safeMime.includes('document') || safeMime.includes('text') || safeMime.includes('sheet')));
       return matchesSearch && matchesStar && matchesType;
     });
   }, [files, filters]);
@@ -219,18 +218,18 @@ const App = () => {
             <span className="text-2xl font-black text-slate-900 tracking-tighter">Gemini Drive</span>
           </div>
           <nav className="flex-1 space-y-2">
-             <SidebarItem active=${!filters.starred && filters.type === 'all'} onClick=${() => setFilters({ ...filters, starred: false, type: 'all' })} icon=${LayoutGrid} label="Network Hub" />
-             <SidebarItem active=${filters.starred} onClick=${() => setFilters({ ...filters, starred: true })} icon=${Star} label="Pinned Units" />
+             <${SidebarItem} active=${!filters.starred && filters.type === 'all'} onClick=${() => setFilters({ ...filters, starred: false, type: 'all' })} icon=${LayoutGrid} label="Network Hub" />
+             <${SidebarItem} active=${filters.starred} onClick=${() => setFilters({ ...filters, starred: true, type: 'all' })} icon=${Star} label="Pinned Units" />
              <div className="pt-8 pb-4 px-4 text-[10px] font-black text-slate-300 uppercase tracking-widest">Federated Access</div>
-             <SidebarItem active=${filters.type === 'image'} onClick=${() => setFilters({ ...filters, starred: false, type: 'image' })} icon=${ImageIcon} label="Media Blocks" />
-             <SidebarItem active=${filters.type === 'doc'} onClick=${() => setFilters({ ...filters, starred: false, type: 'doc' })} icon=${FileText} label="Cloud Docs" />
+             <${SidebarItem} active=${filters.type === 'image'} onClick=${() => setFilters({ ...filters, starred: false, type: 'image' })} icon=${ImageIcon} label="Media Blocks" />
+             <${SidebarItem} active=${filters.type === 'doc'} onClick=${() => setFilters({ ...filters, starred: false, type: 'doc' })} icon=${FileText} label="Cloud Docs" />
           </nav>
           <div className="mt-auto pt-8 border-t border-slate-100 flex items-center space-x-4 p-4 bg-slate-50 rounded-[32px]">
              <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-black text-sm border-2 border-white shadow-md">
-                ${user.email ? user.email[0].toUpperCase() : '?'}
+                ${user.email ? String(user.email)[0].toUpperCase() : '?'}
              </div>
              <div className="flex-1 min-w-0">
-                <p className="text-xs font-black truncate text-slate-900 leading-tight">${user.email ? user.email.split('@')[0] : 'Unknown Node'}</p>
+                <p className="text-xs font-black truncate text-slate-900 leading-tight">${user.email ? String(user.email).split('@')[0] : 'Unknown Node'}</p>
                 <div className="flex items-center text-[9px] font-bold text-emerald-500 uppercase tracking-tight">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-2 animate-pulse"></span> Verified Link
                 </div>
@@ -269,7 +268,7 @@ const App = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10">
             ${filtered.map(f => html`
-              <div key=${f.id} onClick=${() => setSelectedFile(f)} className="group bg-white p-6 rounded-[48px] border border-slate-100 hover:border-indigo-100 hover:shadow-2xl transition-all duration-700 cursor-pointer relative flex flex-col">
+              <div key=${f.id} onClick=${() => setSelectedFile(f)} className="group bg-white p-6 rounded-[48px] border border-slate-100 hover:border-indigo-100 hover:shadow-2xl transition-all duration-700 cursor-pointer relative flex flex-col animate-in fade-in">
                 <div className="aspect-[4/3] bg-slate-50 rounded-[40px] mb-6 flex items-center justify-center overflow-hidden border border-slate-50 relative">
                    <${FileIcon} filename=${f.name} className="fiv-viv-lg opacity-30 group-hover:scale-110 transition-transform duration-700" />
                    <div className="absolute inset-0 flex items-center justify-center bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -279,8 +278,10 @@ const App = () => {
                 <div className="flex-1 min-w-0">
                   <h3 className="font-black text-slate-900 truncate text-sm mb-2">${f.name || 'Untitled Node'}</h3>
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">${(f.size / 1024).toFixed(0)} KB</p>
-                    <span className="bg-slate-50 px-2 py-0.5 rounded-lg text-[9px] font-black text-slate-500 uppercase">${f.mime_type ? f.mime_type.split('/')[1] : 'binary'}</span>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">${(Number(f.size || 0) / 1024).toFixed(0)} KB</p>
+                    <span className="bg-slate-50 px-2 py-0.5 rounded-lg text-[9px] font-black text-slate-500 uppercase">
+                      ${f.mime_type && f.mime_type.includes('/') ? f.mime_type.split('/')[1] : 'binary'}
+                    </span>
                   </div>
                 </div>
                 <div className="absolute top-5 right-5 flex space-x-2 opacity-0 group-hover:opacity-100 transition-all duration-300">
@@ -291,7 +292,7 @@ const App = () => {
             `)}
           </div>
           ${filtered.length === 0 && !uploading && html`
-            <div className="h-full flex flex-col items-center justify-center text-slate-200 py-32">
+            <div className="h-full flex flex-col items-center justify-center text-slate-200 py-32 animate-in fade-in">
               <${HardDrive} size=${84} strokeWidth=${1} className="opacity-10 mb-8" />
               <p className="text-2xl font-black text-slate-300 uppercase tracking-widest">Zero Cloud Objects</p>
             </div>
@@ -308,7 +309,7 @@ const App = () => {
               <div className="text-center">
                  <div className="w-56 h-56 bg-white rounded-[56px] flex items-center justify-center shadow-2xl mx-auto mb-12"><${FileIcon} filename=${selectedFile.name} className="fiv-viv-lg scale-150" /></div>
                  <p className="text-4xl font-black text-slate-900 mb-4">${selectedFile.name || 'Untitled Node'}</p>
-                 <p className="text-xs text-slate-400 font-bold tracking-widest uppercase">Federated UUID: ${selectedFile.id ? selectedFile.id.substring(0, 8) : 'unknown'}</p>
+                 <p className="text-xs text-slate-400 font-bold tracking-widest uppercase">Federated UUID: ${selectedFile.id ? String(selectedFile.id).substring(0, 8) : 'unknown'}</p>
               </div>
             </div>
             
@@ -319,7 +320,7 @@ const App = () => {
                    <h2 className="text-4xl font-black text-slate-900 break-words leading-tight mb-6">${selectedFile.name || 'Untitled Node'}</h2>
                    <div className="flex space-x-3">
                       <button onClick=${() => renameFile(selectedFile.id, selectedFile.name)} className="flex items-center space-x-2 bg-slate-50 px-5 py-2 rounded-2xl text-[10px] font-black uppercase border border-slate-100 text-slate-500 hover:bg-slate-100"><${Edit3} size=${12} /><span>Rename Node</span></button>
-                      <span className="bg-amber-50 text-amber-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase border border-amber-100">${((selectedFile.size || 0) / (1024*1024)).toFixed(2)} MB</span>
+                      <span className="bg-amber-50 text-amber-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase border border-amber-100">${(Number(selectedFile.size || 0) / (1024*1024)).toFixed(2)} MB</span>
                    </div>
                 </div>
                 
