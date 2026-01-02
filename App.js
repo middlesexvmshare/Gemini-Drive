@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { html } from 'htm/react';
 import * as Lucide from 'lucide-react';
 import { analyzeFile } from './services/gemini.js';
@@ -27,7 +27,7 @@ import {
 } from "firebase/auth";
 
 const { 
-  Plus, Search, LayoutGrid, FileText, Image: LucideImage, File, 
+  Plus, Search, LayoutGrid, List, FileText, Image: LucideImage, File, 
   Star, Trash2, X, Download, AlertCircle, HardDrive, StickyNote, 
   LogOut, User, Mail, Lock, Loader2, Folder, ChevronRight, ChevronLeft, Edit3, ArrowUpRight, Settings, ShieldAlert, Sparkles, Camera
 } = Lucide;
@@ -209,12 +209,130 @@ const ProfileModal = ({ user, onClose, onUpdate, onDelete }) => {
   `;
 };
 
+const FileDetailsModal = ({ file, user, onClose, onStar, onDelete, onUpdateFiles }) => {
+  const [localNotes, setLocalNotes] = useState(file.notes || '');
+  const [isSaving, setIsSaving] = useState(false);
+  const debounceRef = useRef(null);
+
+  useEffect(() => {
+    setLocalNotes(file.notes || '');
+  }, [file.id]);
+
+  const handleNotesChange = (e) => {
+    const val = e.target.value;
+    setLocalNotes(val);
+    
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    
+    setIsSaving(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        await upsertFileMetadata(user.uid, file.id, { 
+          name: String(file.name),
+          type: String(file.type),
+          size: Number(file.size),
+          notes: String(val) 
+        });
+        onUpdateFiles(file.id, { notes: String(val) });
+      } catch (err) {
+        console.error("Auto-save notes failed", err);
+      } finally {
+        setIsSaving(false);
+      }
+    }, 1000);
+  };
+
+  const handleExport = async () => {
+    try {
+      const response = await fetch(file.previewUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', file.name);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      alert("Export failed: " + e.message);
+    }
+  };
+
+  return html`
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-slate-900/60 backdrop-blur-2xl animate-in fade-in duration-500">
+      <div className="bg-white rounded-[64px] w-full max-w-7xl h-full max-h-[90vh] flex flex-col md:flex-row overflow-hidden shadow-2xl border border-white/20">
+        <div className="flex-1 bg-slate-50/50 flex items-center justify-center relative p-20 overflow-hidden border-r border-slate-100">
+          <button onClick=${onClose} className="absolute top-12 left-12 p-5 bg-white rounded-[24px] shadow-xl hover:bg-slate-50 active:scale-90 transition-all border border-slate-100"><${X} size=${24} /></button>
+          ${file.type === 'image' ? html`<img src=${file.previewUrl} className="max-h-full max-w-full object-contain rounded-[48px] shadow-2xl border-8 border-white" />` : html`
+            <div className="text-center">
+               <div className="w-56 h-56 bg-white rounded-[48px] flex items-center justify-center shadow-2xl mx-auto mb-12 border border-slate-100"><${FileIcon} filename=${file.name} className="fiv-viv-lg scale-150" /></div>
+               <p className="text-4xl font-black text-slate-900 mb-4 tracking-tight">${String(file.name)}</p>
+            </div>
+          `}
+        </div>
+        
+        <div className="w-full md:w-[500px] p-20 flex flex-col bg-white overflow-y-auto custom-scrollbar">
+          <div className="mb-14">
+            <div className="flex items-center justify-between mb-6">
+              <span className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.4em] block">Cloud Intelligence</span>
+              <button onClick=${e => onStar(file.id, e)} className=${`transition-all ${file.starred ? 'text-amber-500' : 'text-slate-200 hover:text-amber-500'}`}><${Star} size=${24} fill=${file.starred ? "currentColor" : "none"} /></button>
+            </div>
+            <h2 className="text-5xl font-black text-slate-900 break-words leading-[1.1] mb-6 tracking-tight">${String(file.name)}</h2>
+            <div className="flex space-x-3">
+               <span className="bg-indigo-50 text-indigo-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-indigo-100">${String(file.type)}</span>
+               <span className="bg-fuchsia-50 text-fuchsia-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-fuchsia-100">${(file.size / (1024*1024)).toFixed(2)} MB</span>
+            </div>
+          </div>
+          
+          <div className="flex-1 space-y-16">
+            <section>
+              <div className="flex items-center space-x-3 mb-8">
+                <div className="bg-indigo-600 p-2.5 rounded-2xl shadow-lg shadow-indigo-100"><${ArrowUpRight} className="text-white" size=${18} strokeWidth=${3} /></div>
+                <span className="text-[11px] font-black text-indigo-600 uppercase tracking-[0.3em]">AI Summary</span>
+              </div>
+              <div className="bg-gradient-to-br from-indigo-50/50 to-white p-10 rounded-[48px] text-sm leading-relaxed text-indigo-900 border border-indigo-100/50 shadow-inner">
+                ${file.analysis ? String(file.analysis) : html`<div className="flex items-center space-x-3 text-slate-400 font-bold"><${Loader2} className="animate-spin" size=${18} /> <span>Thinking...</span></div>`}
+              </div>
+            </section>
+
+            <section>
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center space-x-3">
+                  <div className="bg-slate-900 p-2.5 rounded-2xl shadow-lg shadow-slate-200"><${StickyNote} className="text-white" size=${18} strokeWidth=${2.5} /></div>
+                  <span className="text-[11px] font-black text-slate-900 uppercase tracking-[0.3em]">Annotations</span>
+                </div>
+                ${isSaving && html`<span className="text-[10px] font-black text-indigo-500 uppercase animate-pulse">Saving...</span>`}
+              </div>
+              <textarea 
+                className="w-full bg-slate-50 p-10 rounded-[48px] text-sm text-slate-600 border border-slate-100 font-medium resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 transition-all"
+                placeholder="Add notes..."
+                value=${localNotes}
+                rows=${4}
+                onChange=${handleNotesChange}
+              />
+            </section>
+          </div>
+
+          <div className="mt-20 flex space-x-5">
+            <button onClick=${handleExport} className="flex-1 bg-slate-900 text-white py-6 rounded-[32px] font-black flex items-center justify-center space-x-4 shadow-2xl active:scale-[0.98] transition-all">
+              <${Download} size=${22} strokeWidth=${2.5} /> <span>Export</span>
+            </button>
+            <button onClick=${e => onDelete(file.id, e)} className="p-6 bg-rose-50 text-rose-500 rounded-[32px] hover:bg-rose-500 hover:text-white transition-all shadow-lg active:scale-[0.98]"><${Trash2} size=${28} /></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
 const App = () => {
   const [user, setUser] = useState(null);
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [filters, setFilters] = useState({ search: '', type: 'all', starred: false });
+  const [viewMode, setViewMode] = useState('grid');
   const [selectedFile, setSelectedFile] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [showProfile, setShowProfile] = useState(false);
@@ -280,7 +398,6 @@ const App = () => {
         reader.onload = async (ev) => {
           const analysisResult = await analyzeFile(f.name, ev.target.result, f.type);
           const analysisStr = String(analysisResult || 'Analysis complete.');
-          // Include mandatory 'name' and other fields to avoid NOT NULL violations
           await upsertFileMetadata(user.uid, fileId, { 
             name: String(f.name),
             type: String(type),
@@ -301,8 +418,8 @@ const App = () => {
   };
 
   const removeFile = async (id, e) => {
-    e.stopPropagation();
-    if (!confirm("Remove this object from cloud storage?")) return;
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (!confirm("Permanently delete this cloud file?")) return;
     try {
       await deleteFileFromStorage(user.uid, id);
       await deleteFileMetadata(id);
@@ -314,12 +431,11 @@ const App = () => {
   };
 
   const toggleStar = async (id, e) => {
-    e.stopPropagation();
+    if (e && e.stopPropagation) e.stopPropagation();
     const file = files.find(f => f.id === id);
     if (!file) return;
     const newStarred = !file.starred;
     try {
-      // Must include mandatory 'name', 'type', 'size' for Postgres NOT NULL constraints during UPSERT
       await upsertFileMetadata(user.uid, id, { 
         name: String(file.name),
         type: String(file.type),
@@ -333,23 +449,9 @@ const App = () => {
     }
   };
 
-  const handleUpdateNotes = async (id, notes) => {
-    const file = files.find(f => f.id === id);
-    if (!file) return;
-    const notesStr = String(notes || '');
-    try {
-      // Must include mandatory 'name', 'type', 'size' for Postgres NOT NULL constraints during UPSERT
-      await upsertFileMetadata(user.uid, id, { 
-        name: String(file.name),
-        type: String(file.type),
-        size: Number(file.size),
-        notes: notesStr 
-      });
-      setFiles(prev => prev.map(f => f.id === id ? { ...f, notes: notesStr } : f));
-      if (selectedFile?.id === id) setSelectedFile({ ...selectedFile, notes: notesStr });
-    } catch (err) {
-      alert("Save failed: " + (err.message || 'Unknown error'));
-    }
+  const onUpdateFiles = (id, updates) => {
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+    if (selectedFile?.id === id) setSelectedFile(prev => ({ ...prev, ...updates }));
   };
 
   const handleDeleteAccount = async () => {
@@ -451,6 +553,10 @@ const App = () => {
           </div>
 
           <div className="flex items-center space-x-6">
+            <div className="flex items-center bg-slate-50 p-1.5 rounded-2xl border border-slate-100 shadow-inner">
+              <button onClick=${() => setViewMode('grid')} className=${`p-2.5 rounded-xl transition-all ${viewMode === 'grid' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><${LayoutGrid} size=${20} /></button>
+              <button onClick=${() => setViewMode('list')} className=${`p-2.5 rounded-xl transition-all ${viewMode === 'list' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><${List} size=${20} /></button>
+            </div>
             <label className="flex items-center space-x-3 bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-3xl cursor-pointer font-black transition-all shadow-2xl shadow-indigo-200 active:scale-95 group">
               <${Plus} size=${22} strokeWidth=${3} className="group-hover:rotate-90 transition-transform duration-300" />
               <span className="text-sm">Upload</span>
@@ -472,7 +578,7 @@ const App = () => {
               <${HardDrive} size=${100} strokeWidth=${1} className="opacity-10 mb-8 text-indigo-900" />
               <p className="text-2xl font-black text-slate-300 uppercase tracking-[0.4em]">Empty Space</p>
             </div>
-          ` : html`
+          ` : (viewMode === 'grid' ? html`
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10">
               ${filtered.map(f => html`
                 <div key=${f.id} onClick=${() => setSelectedFile(f)} className="group bg-white p-6 rounded-[48px] border border-slate-100 hover:border-indigo-100 hover:shadow-2xl hover:shadow-indigo-500/5 transition-all duration-500 cursor-pointer relative flex flex-col">
@@ -487,13 +593,47 @@ const App = () => {
                     </div>
                   </div>
                   <div className="absolute top-6 right-6 flex space-x-2 opacity-0 group-hover:opacity-100 transition-all duration-300">
-                    <button onClick=${e => toggleStar(f.id, e)} className=${`p-3 rounded-2xl shadow-xl transition-all active:scale-90 ${f.starred ? 'bg-amber-400 text-white' : 'bg-white text-slate-400 border border-slate-100'}`}><${Star} size=${18} fill=${f.starred ? "currentColor" : "none"} /></button>
+                    <button onClick=${e => toggleStar(f.id, e)} className=${`p-3 rounded-2xl shadow-xl transition-all active:scale-90 ${f.starred ? 'bg-amber-400 text-white' : 'bg-white text-slate-400 border border-slate-100 hover:text-amber-500'}`}><${Star} size={18} fill=${f.starred ? "currentColor" : "none"} /></button>
                     <button onClick=${e => removeFile(f.id, e)} className="p-3 bg-white border border-slate-100 rounded-2xl shadow-xl text-slate-400 hover:text-rose-500 transition-all active:scale-90"><${Trash2} size=${18} /></button>
                   </div>
                 </div>
               `)}
             </div>
-          `}
+          ` : html`
+            <div className="bg-white rounded-[48px] border border-slate-100 overflow-hidden shadow-sm animate-in fade-in duration-500">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50/50 border-b border-slate-100">
+                  <tr>
+                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Name</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Size</th>
+                    <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
+                    <th className="px-8 py-5 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  ${filtered.map(f => html`
+                    <tr key=${f.id} onClick=${() => setSelectedFile(f)} className="group hover:bg-slate-50/50 transition-all cursor-pointer">
+                      <td className="px-8 py-6">
+                        <div className="flex items-center space-x-4">
+                          <${FileIcon} filename=${f.name} className="fiv-viv-md" />
+                          <span className="font-bold text-slate-700 text-sm truncate max-w-xs">${f.name}</span>
+                          ${f.starred && html`<${Star} size=${14} className="text-amber-400" fill="currentColor" />`}
+                        </div>
+                      </td>
+                      <td className="px-8 py-6 text-xs font-black text-slate-400 uppercase tracking-tight">${(f.size / 1024).toFixed(0)} KB</td>
+                      <td className="px-8 py-6 text-xs font-black text-slate-400 uppercase tracking-tight">${new Date(f.date).toLocaleDateString()}</td>
+                      <td className="px-8 py-6 text-right">
+                        <div className="flex items-center justify-end space-x-2 opacity-0 group-hover:opacity-100 transition-all">
+                           <button onClick=${e => toggleStar(f.id, e)} className=${`p-2.5 rounded-xl transition-all ${f.starred ? 'text-amber-500' : 'text-slate-300 hover:text-amber-500'}`}><${Star} size=${18} fill=${f.starred ? "currentColor" : "none"} /></button>
+                           <button onClick=${e => removeFile(f.id, e)} className="p-2.5 rounded-xl text-slate-300 hover:text-rose-500 transition-all"><${Trash2} size=${18} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  `)}
+                </tbody>
+              </table>
+            </div>
+          `)}
         </div>
       </main>
 
@@ -502,66 +642,14 @@ const App = () => {
 
       <!-- File Details Modal -->
       ${selectedFile && html`
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-slate-900/60 backdrop-blur-2xl animate-in fade-in duration-500">
-          <div className="bg-white rounded-[64px] w-full max-w-7xl h-full max-h-[90vh] flex flex-col md:flex-row overflow-hidden shadow-2xl border border-white/20">
-            <div className="flex-1 bg-slate-50/50 flex items-center justify-center relative p-20 overflow-hidden border-r border-slate-100">
-              <button onClick=${() => setSelectedFile(null)} className="absolute top-12 left-12 p-5 bg-white rounded-[24px] shadow-xl hover:bg-slate-50 active:scale-90 transition-all border border-slate-100"><${X} size=${24} /></button>
-              ${selectedFile.type === 'image' ? html`<img src=${selectedFile.previewUrl} className="max-h-full max-w-full object-contain rounded-[48px] shadow-2xl border-8 border-white" />` : html`
-                <div className="text-center">
-                   <div className="w-56 h-56 bg-white rounded-[48px] flex items-center justify-center shadow-2xl mx-auto mb-12 border border-slate-100"><${FileIcon} filename=${selectedFile.name} className="fiv-viv-lg scale-150" /></div>
-                   <p className="text-4xl font-black text-slate-900 mb-4 tracking-tight">${String(selectedFile.name)}</p>
-                </div>
-              `}
-            </div>
-            
-            <div className="w-full md:w-[500px] p-20 flex flex-col bg-white overflow-y-auto custom-scrollbar">
-              <div className="mb-14">
-                <div className="flex items-center justify-between mb-6">
-                  <span className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.4em] block">Cloud Intelligence</span>
-                  <button onClick=${e => toggleStar(selectedFile.id, e)} className=${`transition-all ${selectedFile.starred ? 'text-amber-500' : 'text-slate-200'}`}><${Star} size=${24} fill=${selectedFile.starred ? "currentColor" : "none"} /></button>
-                </div>
-                <h2 className="text-5xl font-black text-slate-900 break-words leading-[1.1] mb-6 tracking-tight">${String(selectedFile.name)}</h2>
-                <div className="flex space-x-3">
-                   <span className="bg-indigo-50 text-indigo-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-indigo-100">${String(selectedFile.type)}</span>
-                   <span className="bg-fuchsia-50 text-fuchsia-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-fuchsia-100">${(selectedFile.size / (1024*1024)).toFixed(2)} MB</span>
-                </div>
-              </div>
-              
-              <div className="flex-1 space-y-16">
-                <section>
-                  <div className="flex items-center space-x-3 mb-8">
-                    <div className="bg-indigo-600 p-2.5 rounded-2xl shadow-lg shadow-indigo-100"><${ArrowUpRight} className="text-white" size=${18} strokeWidth=${3} /></div>
-                    <span className="text-[11px] font-black text-indigo-600 uppercase tracking-[0.3em]">AI Summary</span>
-                  </div>
-                  <div className="bg-gradient-to-br from-indigo-50/50 to-white p-10 rounded-[48px] text-sm leading-relaxed text-indigo-900 border border-indigo-100/50 shadow-inner">
-                    ${selectedFile.analysis ? String(selectedFile.analysis) : html`<div className="flex items-center space-x-3 text-slate-400 font-bold"><${Loader2} className="animate-spin" size=${18} /> <span>Thinking...</span></div>`}
-                  </div>
-                </section>
-
-                <section>
-                  <div className="flex items-center space-x-3 mb-8">
-                    <div className="bg-slate-900 p-2.5 rounded-2xl shadow-lg shadow-slate-200"><${StickyNote} className="text-white" size=${18} strokeWidth=${2.5} /></div>
-                    <span className="text-[11px] font-black text-slate-900 uppercase tracking-[0.3em]">Annotations</span>
-                  </div>
-                  <textarea 
-                    className="w-full bg-slate-50 p-10 rounded-[48px] text-sm text-slate-600 border border-slate-100 font-medium resize-none focus:outline-none focus:ring-2 focus:ring-indigo-100 transition-all"
-                    placeholder="Add notes..."
-                    value=${String(selectedFile.notes)}
-                    rows=${4}
-                    onChange=${e => handleUpdateNotes(selectedFile.id, e.target.value)}
-                  />
-                </section>
-              </div>
-
-              <div className="mt-20 flex space-x-5">
-                <button onClick=${() => { const a = document.createElement('a'); a.href = selectedFile.previewUrl; a.download = selectedFile.name; a.click(); }} className="flex-1 bg-slate-900 text-white py-6 rounded-[32px] font-black flex items-center justify-center space-x-4 shadow-2xl active:scale-[0.98] transition-all">
-                  <${Download} size=${22} strokeWidth=${2.5} /> <span>Export</span>
-                </button>
-                <button onClick=${e => removeFile(selectedFile.id, e)} className="p-6 bg-rose-50 text-rose-500 rounded-[32px] hover:bg-rose-500 hover:text-white transition-all shadow-lg active:scale-[0.98]"><${Trash2} size=${28} /></button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <${FileDetailsModal} 
+          file=${selectedFile} 
+          user=${user} 
+          onClose=${() => setSelectedFile(null)} 
+          onStar=${toggleStar} 
+          onDelete=${removeFile} 
+          onUpdateFiles=${onUpdateFiles} 
+        />
       `}
     </div>
   `;
